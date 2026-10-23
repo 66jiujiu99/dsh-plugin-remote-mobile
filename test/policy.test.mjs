@@ -61,10 +61,11 @@ test('WS 流端点：整站反代所需的流全部放行，unary 端点本地�
     'session/control',
     'workspace/follow',
     '$events',
-    'account/watch',      // 账号状态
-    'remoteAccess/follow', // 工作区归属（会话分组靠它）
-    'job/follow',          // 后台任务
-    'speech/follow',       // 语音
+    'account/watch',          // 账号状态
+    'remoteAccess/follow',    // 工作区归属（会话分组靠它）
+    'job/follow',             // 后台任务
+    'speech/follow',          // 语音
+    'workspaceFiles/changes', // 文件变更订阅（真机上第一个暴露出来的遗漏）
   ]) {
     assert.deepEqual(decide({ device: writer, kind: 'ws-open', endpoint }), { ok: true }, endpoint)
     assert.deepEqual(decide({ device: reader, kind: 'ws-open', endpoint }), { ok: true }, endpoint)
@@ -76,6 +77,31 @@ test('WS 流端点：整站反代所需的流全部放行，unary 端点本地�
   }
   // 流通道上也不能开永久黑名单端点。
   assert.equal(decide({ device: writer, kind: 'ws-open', endpoint: 'terminal/run' }).code, 'rm/forbidden')
+})
+
+test('流端点命名约定兜底：follow/watch/changes 结尾按流处理，但黑名单优先', async () => {
+  const { isStreamEndpoint, looksLikeStream } = await import('../lib/policy/policy.js')
+
+  // 上游新增订阅端点时，不该因为漏加白名单就悄悄少一块数据。
+  assert.equal(looksLikeStream('workspaceFiles/changes'), true)
+  assert.equal(looksLikeStream('somethingNew/watch'), true)
+  assert.equal(looksLikeStream('anotherThing/follow'), true)
+  // 一次性操作不该被误判成流。
+  assert.equal(looksLikeStream('session/list'), false)
+  assert.equal(looksLikeStream('session/prompt'), false)
+  assert.equal(looksLikeStream('workspaceFiles/read'), false)
+  assert.equal(looksLikeStream(''), false)
+
+  // 兜底生效。
+  assert.equal(isStreamEndpoint('workspaceFiles/changes'), true)
+  assert.equal(isStreamEndpoint('someFutureFeature/watch'), true)
+
+  // **安全优先**：永久黑名单即使命名像流也必须拒。
+  assert.equal(isStreamEndpoint('terminal/follow'), false)
+  assert.equal(isStreamEndpoint('credentials/watch'), false)
+  assert.equal(isStreamEndpoint('plugin/changes'), false)
+  // 未命名成流语义的普通端点也不该被放上流通道。
+  assert.equal(isStreamEndpoint('session/list'), false)
 })
 
 test('空端点名：bad-request', () => {
