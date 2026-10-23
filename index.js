@@ -32,9 +32,10 @@ import { createAudit } from './lib/audit.js'
 import { registerRoutes } from './lib/admin/routes.js'
 import { buildUrls } from './lib/net/lan.js'
 import { createListener } from './lib/net/listener.js'
+import { createTunnel } from './lib/net/tunnel.js'
 import { createUpstream } from './lib/net/upstream.js'
 import { createStatic } from './lib/static.js'
-import { describeConfig, resolveConfig } from './lib/config.js'
+import { RmError, describeConfig, resolveConfig } from './lib/config.js'
 
 /** 插件名（与 package.json / cordis.patch.yml 的行 id 对齐）。 */
 export const name = 'dsh-plugin-remote-mobile'
@@ -123,6 +124,8 @@ export function apply(ctx, rawConfig) {
   let upstream
   /** @type {ReturnType<typeof createListener>|undefined} */
   let listener
+  /** @type {ReturnType<typeof createTunnel>|undefined} */
+  let tunnel
 
   /**
    * 审批影子应答者是否该出手（两道闸门在 queue 里求值，这里只给运行时状态）。
@@ -132,6 +135,47 @@ export function apply(ctx, rawConfig) {
     && state.killSwitch !== true
     && listener !== undefined
     && listener.running === true
+
+  /**
+   * 开隧道（面板 `tunnel.start`）。
+   *
+   * 前置条件：监听器必须在跑（隧道要指向它的端口）。没开就明确报错，
+   * 而不是起一个指向死端口的隧道——那种"看起来开了但其实连不上"最难排查。
+   *
+   * @returns {Promise<{ ok: true, url: string }>} 公网地址。
+   * @throws {RmError} 监听未开 / 找不到 cloudflared / 启动超时。
+   */
+  async function startTunnel() {
+    if (listener === undefined || listener.running !== true) {
+      throw new RmError('rm/tunnel-no-listener', '监听器没在跑，先在面板上开启「手机同步」，再开隧道')
+    }
+    if (tunnel === undefined) {
+      throw new RmError('rm/tunnel-unavailable', '隧道模块未初始化')
+    }
+    const started = await tunnel.start()
+    return { ok: true, url: started.url }
+  }
+
+  /**
+   * 关隧道（面板 `tunnel.stop`）。幂等。
+   * @returns {Promise<{ ok: true }>} 恒成功。
+   */
+  async function stopTunnel() {
+    if (tunnel !== undefined) await tunnel.close('panel-stop')
+    return { ok: true }
+  }
+
+  /**
+   * 隧道状态（面板轮询用）。
+   * @returns {{ ok: true, tunnel: object, provider: string }} 状态。
+   */
+  function tunnelStatus() {
+    return {
+      ok: true,
+      provider: config.tunnel.provider,
+      tunnel: tunnel?.status() ?? { phase: 'idle' },
+    }
+  }
 
   /**
    * 按当前状态对齐监听器（热启停）。
@@ -274,6 +318,16 @@ export function apply(ctx, rawConfig) {
       log,
     })
 
+    // 隧道：手动开关（面板 RPC 触发），不再自启。
+    // 它依赖监听端口，所以 `getPort` 做成惰性读取——端口是 start() 之后才确定的。
+    tunnel = createTunnel({
+      config,
+      log,
+      audit,
+      toolsDir: fileURLToPath(new URL('./tools/', import.meta.url)),
+      getPort: () => listener?.port ?? 0,
+    })
+
     listener = createListener({
       config,
       devices,
@@ -283,6 +337,7 @@ export function apply(ctx, rawConfig) {
       statics,
       audit,
       log,
+      tunnel,
     })
 
     // 面板 RPC：任何异常都不拖垮插件（否则面板会陷入 404 轮询）。
@@ -304,6 +359,9 @@ export function apply(ctx, rawConfig) {
             closeDeviceSockets: (deviceId) => listener?.closeDeviceSockets(deviceId) ?? 0,
             closeAllDeviceSockets: () => listener?.closeAllDeviceSockets() ?? 0,
             pairUrls,
+            startTunnel,
+            stopTunnel,
+            tunnelStatus,
           },
         })
       } catch (error) {
@@ -330,6 +388,15 @@ export function apply(ctx, rawConfig) {
       })
       return () => {
         approvals.setActive(false)
+        // **先关隧道再关监听器**：隧道是公网入口，不能让它在插件已经卸载后
+        // 还挂在外面（那会暴露一个没有守卫的半死服务）。
+        if (tunnel !== undefined) {
+          const currentTunnel = tunnel
+          tunnel = undefined
+          void currentTunnel.close('plugin-dispose').catch((error) => {
+            log('warn', `remote-mobile: 关闭隧道失败：${String(error?.message ?? error)}`)
+          })
+        }
         const current = listener
         listener = undefined
         if (current !== undefined) {

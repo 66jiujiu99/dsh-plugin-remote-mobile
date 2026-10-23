@@ -12,7 +12,6 @@ devices.json
 # 开发期临时脚本与探针
 _dev/
 test/tmp/
-_probe*/
 
 # 下载标记（Windows Mark of the Web）
 *:Zone.Identifier
@@ -32,3 +31,7 @@ desktop.ini
 *.key
 credentials.json
 TASK-file-scope.md
+
+# 本地下载的 cloudflared 二进制（55MB，不进仓库；用户自行下载）
+tools/cloudflared.exe
+tools/cloudflared

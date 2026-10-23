@@ -110,6 +110,64 @@ netstat -ano | findstr :17890
 **尾斜杠是功能要求**：上游 `index.html` 注入 `<base href="./">`，资源全是相对路径。
 地址栏停在 `/m`（无斜杠）时 `./assets/x.js` 会解析成 `/assets/x.js`（跳出前缀）→ 整站 404。
 
+### 面板 RPC（PC 侧，需要连接凭据）
+
+| op | 作用 |
+|---|---|
+| `status` / `set.enabled` | 状态 / 开关监听 |
+| `pair.create` / `pair.cancel` | 生成 / 取消配对码 |
+| `devices.*` | 列设备、改名、撤销、只读 |
+| **`tunnel.start` / `tunnel.stop` / `tunnel.status`** | **开关公网隧道、查状态** |
+| `kill` / `audit.head` / `selftest` | 急停 / 审计 / 自检 |
+
+---
+
+## 4.1 公网隧道（可选，默认关闭）
+
+不开隧道时，手机必须和 PC 在**同一个 WiFi / 热点**。开了隧道，手机可以用任意网络访问。
+用的是 **Cloudflare Quick Tunnel**：匿名、免账号、免服务器、免公网 IP。
+
+### 怎么装 cloudflared
+
+插件本身**不带** cloudflared（55MB，不适合进仓库）。三种方式任选：
+
+1. **放便携版（最简单）**：把 `cloudflared.exe` 丢进本插件的 `tools/` 目录，插件会自动找到。
+2. **指定路径**：配置 `tunnel.binaryPath: "C:/path/to/cloudflared.exe"`。
+3. **装进 PATH**：`winget install Cloudflare.cloudflared`，插件会自动从 PATH 找。
+
+下载地址（官方 Release，建议核对 SHA-256）：
+
+```
+https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe
+```
+
+### 怎么开
+
+1. 先把「手机同步」开起来（隧道要指向监听端口）
+2. 设置页 →「手机同步」→「公网隧道」→ **开启隧道**
+3. 等 10-60 秒（Cloudflare 分配域名），面板会显示公网地址
+4. 用手机打开那个地址 → 配对 → 进入
+
+**这个开关是手动的，刻意不跟 `enabled` 联动**：开了监听不等于要开公网。
+
+### 三条行为约定
+
+| 行为 | 说明 |
+|---|---|
+| **域名每次都变** | Quick Tunnel 不做持久域名。重启隧道就是新地址，旧地址立刻失效 |
+| **空闲自动断开** | `tunnel.idleTimeoutSec`（默认 1800 秒）内没有请求就自动关隧道。你在用就一直给，不用就断 |
+| **父死子亡** | DSH 崩溃或被任务管理器结束，隧道会跟着消失（靠管道所有权，不依赖清理代码）。不会留下仍在公网暴露的孤儿进程 |
+
+### 配置项
+
+```yaml
+tunnel:
+  provider: quick        # none | quick（frpc 仍是预留形状，未实现）
+  binaryPath: ''         # 空 = 自动找 PATH 与 tools/
+  idleTimeoutSec: 1800   # 空闲多久自动关（0 = 不自动关）
+  startTimeoutSec: 90    # 等域名的最长时间
+```
+
 ---
 
 ## 5. 安全模型（决定要不要开之前读）
@@ -132,14 +190,19 @@ netstat -ano | findstr :17890
 - 插件跑在**宿主进程内、工作区沙箱之外**，和你的用户权限相同。
 - 开了监听就等于**同一网络里的人可以探测到这个端口**（虽然有配对门）。
   在公共 WiFi 下建议关掉，或把 `allowedNetworks` 收紧到你家网段。
-- 配对码默认 6 位数字，靠**有效期 60 秒 + 5 次尝试**限制爆破。
-  **如果将来做公网隧道，必须加按 IP 限流**——现在没有，因为局域网场景下不需要。
+- **开了隧道 = 全球可达**。这时候「同一 WiFi」这道天然边界没有了，
+  只剩配对码。所以：配对码是 **8 位**（31 字符表，≈39.6 bit，已排除 0/O/1/I/L 等易混字符），
+  并且**按 IP 限流**（10 次/分钟）+ 单码 5 次错误即锁 60 秒。
+  在公网暴露期间请勿把配对码发到会被转发的渠道。
+- 隧道用的是**匿名 Quick Tunnel**，流量经 Cloudflare 边缘。不要通过它传你不想让第三方看见的内容。
+- Cloudflare 不保证 Quick Tunnel 的可用性；本插件会在空闲超时后主动关闭，减少暴露窗口。
 
 ---
 
 ## 6. 已知限制
 
-1. **仅局域网**：本期不做隧道（`tunnel` 配置项只是形状预留）。
+1. **隧道只有 Quick Tunnel**：域名每次重启都变（不做持久域名，那需要 Cloudflare 账号与 named tunnel）。
+   `frpc` 仅在配置里预留形状，未实现。
 2. **手机上的「能力」降级**：见 §1 的表格。
 3. **布局不专门适配手机**：DSH Web UI 是给宽屏设计的，手机上侧栏会挤。
    目前"能用"，但没有专门的移动端 CSS。
@@ -147,7 +210,7 @@ netstat -ano | findstr :17890
 
 ---
 
-## 7. 实测状态（2026-10-23）
+## 7. 实测状态（2026-10-23 / 24）
 
 | 项 | 状态 | 证据 |
 |---|---|---|
@@ -156,14 +219,23 @@ netstat -ano | findstr :17890
 | 账号/登录态显示 | ✅ | 补齐 `account/watch` 流后恢复正常 |
 | 设备配对 | ✅ | 真机 Android，配对码 → 设备 cookie → 免密进入 |
 | WebSocket | ✅ | `/m/api/remote.mux` 剥前缀转发，会话流实时更新 |
-| 单元测试 | ✅ | **78 / 78 通过** |
+| **公网隧道** | ✅ | 真 cloudflared 起隧道 → 公网 302 到配对页 → 配对 → 200 且前缀正确剥离 |
+| **Host 栅栏放行** | ✅ | 隧道域名可过；无关域名仍 400（开隧道不放宽边界） |
+| **父死子亡** | ✅ | 强杀父进程后 8 秒内 cloudflared 自行消失，零孤儿 |
+| **空闲超时** | ✅ | 到点自动关；持续 touch 可保活 |
+| 单元 + 集成测试 | ✅ | **92 / 92 通过** |
 | Agent 浏览器 | ❌ | 预期失败：需要 Electron 主进程 API |
 
 验证方式：
 
 ```bash
-# 单元测试（用桌面自带的 Electron Node，PATH 里通常没有 node）
+# 全部单测 + 集成测试（用桌面自带的 Electron Node，PATH 里通常没有 node）
 ELECTRON_RUN_AS_NODE=1 "C:\Data\APP\dsh\DeepSeek Harness.exe" --test test/*.test.mjs
+
+# 真实隧道端到端（会真的连 Cloudflare，需要 tools/cloudflared.exe）
+ELECTRON_RUN_AS_NODE=1 "C:\Data\APP\dsh\DeepSeek Harness.exe" _probe/tunnel-e2e.mjs
+ELECTRON_RUN_AS_NODE=1 "C:\Data\APP\dsh\DeepSeek Harness.exe" _probe/full-chain.mjs
+ELECTRON_RUN_AS_NODE=1 "C:\Data\APP\dsh\DeepSeek Harness.exe" _probe/tunnel-ownership.mjs
 ```
 
 ---
@@ -178,10 +250,15 @@ ELECTRON_RUN_AS_NODE=1 "C:\Data\APP\dsh\DeepSeek Harness.exe" --test test/*.test
 | 资源 404 | 地址少了尾斜杠，确认是 `/m/` 不是 `/m` |
 | 被弹回配对页 | 设备 cookie 过期或被撤销，重新配对 |
 | 点「Agent 浏览器」报错 | 预期行为，见 §1 的能力表 |
+| **开隧道报 `rm/tunnel-no-binary`** | 找不到 cloudflared。放进 `tools/`，或配 `tunnel.binaryPath`，或装进 PATH |
+| **开隧道报 `rm/tunnel-no-listener`** | 手机同步没开。先开监听再开隧道 |
+| **开隧道报 `rm/tunnel-timeout`** | 90 秒内没拿到域名。多半是网络到 Cloudflare 不通，或被安全软件拦 |
+| **公网打开是 400** | 隧道域名没进 Host 白名单。确认隧道状态是 `running`（面板上显示公网地址） |
+| **公网打开超时** | 边缘还没铺开，等 30-60 秒重试；或隧道已因空闲超时关闭 |
 
 日志位置：`~/.dsh/remote-mobile/`
-- `audit.jsonl` —— 谁在什么时候访问了什么（只记元数据）
-- `debug.jsonl` —— 路由、WS 帧、cookie 交换等细节
+- `audit.jsonl` —— 谁在什么时候访问了什么（只记元数据）；隧道开关记为 `kind: "tunnel"`
+- `debug.jsonl` —— 路由、WS 帧、cookie 交换、cloudflared 输出等细节
 - `devices.json` —— 设备表（只有哈希，没有明文 secret）
 
 ---

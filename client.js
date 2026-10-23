@@ -104,6 +104,19 @@ window.__ModuleLoader__.load({
       error: '操作失败',
       actionFailed: '操作失败',
       deviceOnlineWindow: '在线 = 最近 45 秒内有请求',
+      tunnel: '公网隧道',
+      tunnelOff: '未开启',
+      tunnelStarting: '正在启动…',
+      tunnelPublic: '公网可达',
+      tunnelStart: '开启隧道',
+      tunnelStop: '关闭隧道',
+      tunnelHint: '开启后手机可以用任意网络访问（不限于同一个 WiFi）。域名每次启动都不同，' +
+        '长时间无操作会自动断开。',
+      tunnelNeedListener: '请先开启手机同步，隧道才有可指向的端口。',
+      tunnelWarn: '⚠ 当前 /m 可从公网访问。请确保配对码没有外传；不用时请关掉。',
+      tunnelOpened: '隧道已开启',
+      tunnelClosed: '隧道已关闭',
+      tunnelIdle: '已空闲 {n} 秒（长时间无请求会自动断开）',
     };
 
     const EN = {
@@ -181,6 +194,19 @@ window.__ModuleLoader__.load({
       error: 'Action failed',
       actionFailed: 'Action failed',
       deviceOnlineWindow: 'Online = a request within the last 45 seconds',
+      tunnel: 'Public tunnel',
+      tunnelOff: 'Off',
+      tunnelStarting: 'Starting…',
+      tunnelPublic: 'Publicly reachable',
+      tunnelStart: 'Open tunnel',
+      tunnelStop: 'Close tunnel',
+      tunnelHint: 'Once open, the phone can reach this DSH from any network, not just the same Wi-Fi. ' +
+        'The URL changes on every start, and an idle tunnel closes itself.',
+      tunnelNeedListener: 'Enable Phone sync first — the tunnel needs a listening port to point at.',
+      tunnelWarn: '⚠ /m is currently reachable from the public internet. Keep the pairing code private and close the tunnel when done.',
+      tunnelOpened: 'Tunnel opened',
+      tunnelClosed: 'Tunnel closed',
+      tunnelIdle: 'Idle for {n}s (closes automatically after a long idle period)',
     };
 
     // ───────────────────────────── RPC ─────────────────────────────
@@ -256,6 +282,10 @@ window.__ModuleLoader__.load({
       .rm-badge { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; border: .5px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxs-12); }
       .rm-badge.on { color: var(--dsw-alias-state-business-primary); border-color: var(--dsw-alias-state-business-primary); }
       .rm-badge.err { color: var(--dsw-alias-state-error-primary); border-color: var(--dsw-alias-state-error-primary); }
+      .rm-badge.warn { color: var(--dsw-alias-state-warning-primary, #b8860b); border-color: var(--dsw-alias-state-warning-primary, #b8860b); }
+      /* 公网可达的强提示：一眼就能看到，不靠颜色辨别能力也能读。 */
+      .rm-tunnel-warn { padding: 8px 10px; border-radius: var(--dsw-radius-sm); background: var(--dsw-alias-bg-warning, rgba(184,134,11,.12)); border: .5px solid var(--dsw-alias-state-warning-primary, #b8860b); font: var(--dsw-font-xxs-12); line-height: 1.5; }
+      .rm-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
       .rm-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
       .rm-card { border: .5px solid var(--dsw-alias-border-l3); border-radius: var(--dsw-radius-sm); background: var(--dsw-alias-bg-layer-1); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
@@ -331,6 +361,8 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = React.useState('');
       const [revoking, setRevoking] = React.useState('');
       const [renaming, setRenaming] = React.useState(null);
+      /** 隧道状态（`{ok, provider, tunnel:{phase, publicUrl, lastError, idleSec}}`）。 */
+      const [tunnelState, setTunnel] = React.useState(null);
       const alive = React.useRef(true);
       const pollTimer = React.useRef(0);
       const noticeTimer = React.useRef(0);
@@ -356,6 +388,12 @@ window.__ModuleLoader__.load({
               if (alive.current) setDevices(Array.isArray(listValue && listValue.devices) ? listValue.devices : []);
             } catch { /* 保留上一份列表 */ }
           }
+          // 隧道状态单独取：它比 status 更慢变，且**失败不影响主面板**
+          // （老版本 Host 没有这个 op 时，面板照常能用）。
+          try {
+            const tunnelValue = await call('tunnel.status');
+            if (alive.current) setTunnel(tunnelValue || null);
+          } catch { /* Host 未提供 tunnel.status，保持未知 */ }
         } catch (failure) {
           if (!alive.current) return;
           if (failure.hostDown) setHostDown(true);
@@ -427,6 +465,28 @@ window.__ModuleLoader__.load({
       const ipUrls = lanIps.map((item) => (typeof item === 'string' ? item : (item && (item.url || item.address)) || '')).filter(Boolean);
 
       const toggleEnabled = () => run('toggle', () => call('set.enabled', { enabled: !(enabled && !killed) }));
+
+      // ── 隧道 ──────────────────────────────────────────────────
+      const tunnelPhase = (tunnelState && tunnelState.tunnel && tunnelState.tunnel.phase) || 'idle';
+      const tunnelUrl = (tunnelState && tunnelState.tunnel && tunnelState.tunnel.publicUrl) || '';
+      const tunnelLastError = (tunnelState && tunnelState.tunnel && tunnelState.tunnel.lastError) || '';
+      const tunnelIdleSec = Number(tunnelState && tunnelState.tunnel && tunnelState.tunnel.idleSec);
+      // 空闲多久会断——从 Host 拿不到配置，就用状态里给的 idleSec 做正计时。
+      const idleText = tunnelPhase === 'running' && Number.isFinite(tunnelIdleSec)
+        ? t('tunnelIdle').replace('{n}', String(tunnelIdleSec))
+        : '';
+
+      const startTunnel = () => run('tunnelStart', async () => {
+        const value = await call('tunnel.start');
+        if (value && value.url) flash(t('tunnelOpened'));
+        return value;
+      });
+
+      const stopTunnel = () => run('tunnelStop', async () => {
+        const value = await call('tunnel.stop');
+        flash(t('tunnelClosed'));
+        return value;
+      });
 
       const createPair = () => run('pair', async () => {
         const value = await call('pair.create', {});
@@ -614,6 +674,50 @@ window.__ModuleLoader__.load({
             )
             : h('div', { className: 'rm-muted' }, t('pairHint')),
           !enabled ? h('div', { className: 'rm-muted' }, t('noUrls')) : null,
+        ),
+
+        // 公网隧道（手动开关）
+        h('div', { className: 'rm-card' },
+          h('div', { className: 'rm-card-title' },
+            h('span', null, t('tunnel')),
+            h('span', { className: 'rm-spacer' }),
+            tunnelPhase === 'running'
+              ? h('span', { className: 'rm-badge warn' }, t('tunnelPublic'))
+              : tunnelPhase === 'starting'
+                ? h('span', { className: 'rm-badge' }, t('tunnelStarting'))
+                : h('span', { className: 'rm-badge' }, t('tunnelOff')),
+          ),
+
+          // 公网可达时最要紧的是让用户「看得见」——这一行是刻意的强提示。
+          tunnelPhase === 'running'
+            ? h('div', { className: 'rm-tunnel-warn' }, t('tunnelWarn'))
+            : null,
+
+          tunnelPhase === 'running' && tunnelUrl
+            ? h('div', { className: 'rm-url', style: { marginTop: '2px' } },
+              h('code', { title: tunnelUrl }, tunnelUrl),
+              h('button', { className: 'rm-btn ghost', type: 'button', onClick: () => copy(tunnelUrl) }, t('copy')),
+            )
+            : null,
+
+          tunnelLastError && tunnelPhase !== 'running'
+            ? h('div', { className: 'rm-muted', style: { color: 'var(--dsw-alias-danger, #c0392b)' } }, tunnelLastError)
+            : null,
+
+          h('div', { className: 'rm-row' },
+            tunnelPhase === 'running'
+              ? h('button', { className: 'rm-btn', type: 'button', disabled: busy === 'tunnelStop', onClick: stopTunnel }, busy === 'tunnelStop' ? t('loading') : t('tunnelStop'))
+              : h('button', {
+                className: 'rm-btn primary',
+                type: 'button',
+                disabled: busy === 'tunnelStart' || !listening,
+                onClick: startTunnel,
+                title: listening ? '' : t('tunnelNeedListener'),
+              }, busy === 'tunnelStart' ? t('loading') : t('tunnelStart')),
+          ),
+
+          h('div', { className: 'rm-muted' }, listening ? t('tunnelHint') : t('tunnelNeedListener')),
+          idleText ? h('div', { className: 'rm-muted' }, idleText) : null,
         ),
 
         // 设备

@@ -142,18 +142,26 @@ test('配对码：正确码只能用一次，错误码计数，超限锁定', as
     // 没有码时先建码。
     assert.equal(pairing.current().active, false)
     const { code, expiresAt } = pairing.create()
-    assert.match(code, /^\d{6}$/)
+    // 8 位、大写、字母表已排除易混字符 0/O/1/I/L。
+    assert.match(code, /^[2-9A-HJ-NP-Z]{8}$/)
+    assert.equal(code.length, 8)
+    assert.doesNotMatch(code, /[01OIL]/)
     assert.equal(expiresAt > Date.now(), true)
     assert.equal(pairing.current().active, true)
 
     // 错误码 → pair-invalid，并且计入次数。
     await assert.rejects(
-      pairing.attempt({ code: code === '000000' ? '111111' : '000000', ua: '', ip: '10.0.0.9' }),
+      pairing.attempt({ code: code === '22222222' ? '33333333' : '22222222', ua: '', ip: '10.0.0.9' }),
       (error) => error.code === 'rm/pair-invalid',
     )
 
-    // 正确码 → 拿到 setCookie；复用同一个码 → rm/pair-used（不是 expired）。
-    const created = await pairing.attempt({ code, name: '我的手机', ua: 'iPhone', ip: '10.0.0.9' })
+    // 小写 + 空格也应该能用（手机输入法常见），容错不能把用户挡在门外。
+    const created = await pairing.attempt({
+      code: ` ${code.toLowerCase()} `,
+      name: '我的手机',
+      ua: 'iPhone',
+      ip: '10.0.0.9',
+    })
     assert.equal(created.device.name, '我的手机')
     assert.match(created.setCookie, /dshm_d=/)
     await assert.rejects(
@@ -171,10 +179,12 @@ test('配对码：正确码只能用一次，错误码计数，超限锁定', as
     assert.ok(pairedAgain.device.id.length > 0)
 
     // 新码连续错 3 次 → locked。
+    // 注意：错码必须**格式合法**（8 位、字母表内），否则会先被格式校验挡掉、
+    // 根本不计入错误次数——那正是这道格式闸门的意义，但不能用它来测锁定。
     const second = pairing.create()
     let locked
     for (let attempt = 0; attempt < 4; attempt += 1) {
-      const wrong = second.code === '999999' ? '000000' : '999999'
+      const wrong = second.code === '22222222' ? '33333333' : '22222222'
       try {
         await pairing.attempt({ code: wrong, ua: '', ip: '10.0.0.10' })
       } catch (error) {
