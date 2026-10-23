@@ -1,0 +1,34 @@
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+
+# 本地运行时数据（插件写在 ~/.dsh/remote-mobile，不该进仓库）
+audit.jsonl
+debug.jsonl
+devices.json
+*.log
+
+# 开发期临时脚本与探针
+_dev/
+test/tmp/
+_probe*/
+
+# 下载标记（Windows Mark of the Web）
+*:Zone.Identifier
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+
+# 本地凭证与环境（绝不可提交）
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+TASK-file-scope.md

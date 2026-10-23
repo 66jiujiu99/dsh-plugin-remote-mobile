@@ -1,0 +1,66 @@
+{
+  "name": "dsh-plugin-remote-mobile",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH 手机同步：把桌面端完整 Web UI 反代到手机（/m），带设备配对、只读策略与审批路由。手机上的操作全部在 PC 端执行，手机只负责看和点。",
+  "main": "index.js",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/66jiujiu99/dsh-plugin-remote-mobile.git"
+  },
+  "homepage": "https://github.com/66jiujiu99/dsh-plugin-remote-mobile#readme",
+  "bugs": {
+    "url": "https://github.com/66jiujiu99/dsh-plugin-remote-mobile/issues"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/*.js",
+    "lib/**/*.js",
+    "web/pair.html",
+    "web/icon.svg",
+    "locale/*.json",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "PROTOCOL.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "mobile",
+    "lan",
+    "remote",
+    "reverse-proxy"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

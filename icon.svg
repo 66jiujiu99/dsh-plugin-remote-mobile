@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="DSH 手机同步">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#161b2e"/>
+      <stop offset="1" stop-color="#0b0d12"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7d92ff"/>
+      <stop offset="1" stop-color="#3f5bf6"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- 手机轮廓 -->
+  <rect x="150" y="96" width="212" height="320" rx="40" fill="none" stroke="url(#accent)" stroke-width="18"/>
+  <rect x="196" y="126" width="120" height="10" rx="5" fill="url(#accent)" opacity=".55"/>
+
+  <!-- 会话气泡（三条） -->
+  <rect x="184" y="180" width="112" height="20" rx="10" fill="#e8eaf0" opacity=".92"/>
+  <rect x="216" y="218" width="112" height="20" rx="10" fill="url(#accent)"/>
+  <rect x="184" y="256" width="80" height="20" rx="10" fill="#e8eaf0" opacity=".62"/>
+
+  <!-- 同步弧线 -->
+  <path d="M186 300a78 78 0 0 0 140 34" fill="none" stroke="#e8eaf0" stroke-opacity=".55" stroke-width="14" stroke-linecap="round"/>
+  <path d="M330 292v44h-44" fill="none" stroke="#e8eaf0" stroke-opacity=".55" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- 麦克风/输入条 -->
+  <rect x="206" y="364" width="100" height="12" rx="6" fill="#e8eaf0" opacity=".35"/>
+</svg>

@@ -1,0 +1,41 @@
+# 「手机同步」Host 半边：enabled=true 时在 bindAddress:port 起局域网监听器，
+# 把 /m* 与 /api/remote.mux 反代到 ctx.webServer.getOrigin()；并在 Host 侧注册
+# 审批影子应答者。Client 半边（设置页分区）由 package.json 的 dsh.client 声明。
+#
+# 默认 enabled: false —— 装上插件不绑任何非环回地址（PLAN §6.3）。
+# 需要打开时用 PC 面板的开关（或改这里的 enabled 后重启）。
+# 全部键的校验见 lib/config.js（未知键会被拒绝，避免拼写错误被静默忽略）。
+- insert:
+    - id: remote-mobile
+      name: dsh-plugin-remote-mobile
+      config:
+        enabled: false
+        bindAddress: 0.0.0.0
+        port: 17890
+        allowedNetworks: []
+        cookieMaxAgeDays: 180
+        pairCodeTtlSec: 60
+        pairMaxAttempts: 5
+        lanOnly: true
+        tunnel:
+          provider: none
+          serverAddr: ""
+          serverPort: 7000
+          remotePort: 0
+          tls: true
+        fileAccess:
+          mode: workspace
+          roots: []
+          extraDeny: []
+        approvalRouting: phone-first
+        askTimeoutMs: 12000
+        deviceOnlineWindowMs: 45000
+        readonlyDefaults:
+          terminal: true
+          credentials: true
+          pluginManager: true
+          openInApp: true
+        audit:
+          enabled: true
+          maxBytes: 2097152
+        debug: true

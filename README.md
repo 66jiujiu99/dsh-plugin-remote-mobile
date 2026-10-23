@@ -1,0 +1,203 @@
+# dsh-plugin-remote-mobile · 手机同步
+
+把 DSH 桌面版的**完整 Web UI** 搬到手机上：手机浏览器打开 `http://<LAN-IP>:17890/m`，
+看到的就是 PC 上那个界面——工作区分组、会话、插件设置、排队提示，全都在。
+
+**所有操作都在 PC 上执行**：手机只是一个远端的遥控器和显示器，模型、工具、文件系统、
+终端，全部跑在你那台电脑上。
+
+- **对外契约**：[`PROTOCOL.md`](./PROTOCOL.md)
+- **零第三方依赖**：只用 `node:` 内置模块（`http`/`net`/`crypto`/`fs`/`os`/`stream`），ESM，无构建。
+
+---
+
+## 1. 它到底是什么（先看这一节）
+
+```
+手机 ──http://<LAN-IP>:17890/m/*──▶ 插件监听器（0.0.0.0:17890）
+      ──WS /m/api/remote.mux────▶
+                                        │ ① Host/Origin 栅栏（挡 DNS rebinding）
+                                        │ ② 设备 cookie 校验（配对过才放行）
+                                        │ ③ 剥前缀 /m → /
+                                        │ ④ 注入上游 cookie、抹掉手机凭据
+                                        ▼
+                              DSH 自己的 Web 端口（127.0.0.1:<随机>）
+```
+
+**它不是"重新实现的移动版"**，而是一层反向代理：把 `localhost:<port>` 上的网站，
+挂到 `0.0.0.0:17890/m/` 上，并加了一道配对门。
+
+这样做的直接好处：DSH 加什么新功能，手机上就有——不用维护第二套界面。
+
+### ⚠️ 重要：反代只搬「界面」，不搬「能力」
+
+这是使用前必须理解的一条。
+
+手机浏览器里跑的是**页面 JavaScript 本身**，而不是 PC 的 Electron 渲染进程。
+所以任何依赖 **Electron / 本机 Node** 的功能，到手机上会显示正常但**点了会失败**：
+
+| 功能 | 手机上 | 原因 |
+|---|---|---|
+| 会话、消息、工作区分组 | ✅ 可用 | 纯网络请求，走反代 |
+| 发消息、选模型、切换工作区 | ✅ 可用 | 纯网络请求 |
+| 插件设置、账号、审批 | ✅ 可用 | 纯网络请求 |
+| 文件浏览 / 读工作区文件 | ✅ 可用 | 走 RPC 回 PC 读 |
+| **Agent 浏览器（webview）** | ❌ **不可用** | 需要 Electron 主进程的 `webview` lease API |
+| **终端** | ⚠️ 取决于实现 | 若走 Host RPC 则可用；若依赖本地 pty 则不可用 |
+| **选目录 / 打开文件对话框** | ❌ 弹在 PC 上 | 原生对话框由 PC 的 Electron 弹出 |
+
+看到「受控浏览器只在 DSH 桌面版可用」这句提示时，就是这个原因——不是权限问题，
+是手机浏览器**没有那个 API**。
+
+> 想彻底解决「手机上操控网页」，需要另做**云浏览器**（PC 上跑有头浏览器、截图回传、
+> 点击转 CDP 输入）。那是另一个量级的工程，本插件不做。
+
+---
+
+## 2. 安装
+
+```bash
+# 在 DSH 里（需要 danger-full-access 或逐次批准）
+plugin_manager install_bundle target=C:\path\to\dsh-plugin-remote-mobile
+```
+
+**安装 ≠ 开启**。装好之后还要在配置里设 `enabled: true`（或在设置页的「手机同步」里打开开关）。
+
+> **配置陷阱**：插件重载（`set_plugin enabled=false/true`）会用运行时状态**重写**
+> `~/.dsh/profiles/<profile>/cordis.yml`。所以手工改完配置后必须**重启 DSH**，
+> 不要在中间重载插件，否则配置会被覆盖回旧值。
+
+示例配置（`cordis.yml` 中本插件那一行的 `config`）：
+
+```yaml
+enabled: true
+bindAddress: 0.0.0.0
+port: 17890
+allowedNetworks: []      # 空 = 只允许私有网段（192.168/10/172.16-31）+ 链路本地 + loopback
+deviceOnlineWindowMs: 90000
+deviceOfflineTtlMs: 43200000
+```
+
+---
+
+## 3. 第一次用
+
+1. 手机连上和 PC **同一个 WiFi / 热点**（PC 开热点就是 `192.168.137.1`）
+2. 手机打开 `http://<PC-IP>:17890/m`
+3. 会被跳到配对页，输入 PC 面板上显示的**配对码**（默认 60 秒有效、5 次尝试）
+4. 配对成功后进入完整界面；cookie 有效期 `cookieMaxAgeDays`（默认 180 天）
+
+找不到 IP？在 PC 上跑：
+
+```bash
+netstat -ano | findstr :17890
+```
+
+或直接看插件面板，它会列出所有可用 URL。
+
+---
+
+## 4. 端点
+
+| 路径 | 谁处理 | 说明 |
+|---|---|---|
+| `GET /m/ping` | 插件 | 健康检查（无鉴权），配对页靠它判断 PC 是否在线 |
+| `GET /m/pair` | 插件 | 配对页 |
+| `POST /m/pair` | 插件 | 配对提交（JSON 或 urlencoded） |
+| `/m/**`（其余） | **反代到上游** | 缺尾斜杠会 302 到 `/m/`，否则相对路径会跳出前缀 |
+| `WS /m/api/remote.mux` | **反代到上游** | 会话流；缺它页面只剩静态外壳 |
+
+**尾斜杠是功能要求**：上游 `index.html` 注入 `<base href="./">`，资源全是相对路径。
+地址栏停在 `/m`（无斜杠）时 `./assets/x.js` 会解析成 `/assets/x.js`（跳出前缀）→ 整站 404。
+
+---
+
+## 5. 安全模型（决定要不要开之前读）
+
+**核心边界**：手机只拿到一个**设备 cookie**（`dshm_d`）；DSH 自己的 `dsh-auth-*`
+凭据只存在插件内存里，**永远不下发给手机**。
+
+| 防线 | 做法 |
+|---|---|
+| 来源网段 | `allowedNetworks` 为空时只放行私有网段 + 链路本地 + loopback |
+| DNS rebinding | `Host` 必须是本机真实监听地址之一（LAN IP / hostname / localhost） |
+| 跨站请求 | `Origin` 必须与 `Host` 同 authority；`Sec-Fetch-Site: cross-site` 一律拒 |
+| 凭据隔离 | 上行抹掉手机的 `Cookie`/`Authorization`/`Sec-Fetch-*`/`X-Forwarded-*`；下行抹掉 `Set-Cookie`/HSTS |
+| 永久黑名单 | `terminal/`、`credentials/`、`plugin/`、`plugin-manager/`、`settings/` —— 任何设备任何路由都拒 |
+| 只读设备 | fail-closed 白名单：只允许读取类端点，未知端点直接 403 |
+| 撤权 | 单设备撤销立即断开在途连接；`kill` 急停但保留设备表，可恢复 |
+
+**必须知道的残余风险**：
+
+- 插件跑在**宿主进程内、工作区沙箱之外**，和你的用户权限相同。
+- 开了监听就等于**同一网络里的人可以探测到这个端口**（虽然有配对门）。
+  在公共 WiFi 下建议关掉，或把 `allowedNetworks` 收紧到你家网段。
+- 配对码默认 6 位数字，靠**有效期 60 秒 + 5 次尝试**限制爆破。
+  **如果将来做公网隧道，必须加按 IP 限流**——现在没有，因为局域网场景下不需要。
+
+---
+
+## 6. 已知限制
+
+1. **仅局域网**：本期不做隧道（`tunnel` 配置项只是形状预留）。
+2. **手机上的「能力」降级**：见 §1 的表格。
+3. **布局不专门适配手机**：DSH Web UI 是给宽屏设计的，手机上侧栏会挤。
+   目前"能用"，但没有专门的移动端 CSS。
+4. **`webview` 类插件在手机上不可用**：架构限制，不是配置问题。
+
+---
+
+## 7. 实测状态（2026-10-23）
+
+| 项 | 状态 | 证据 |
+|---|---|---|
+| 整站反代 | ✅ | 手机打开 `/m/` 看到完整 UI，会话内容正常渲染 |
+| 工作区分组 | ✅ | 补齐 `remoteAccess/follow` 流后，会话从「未分组」回到正确归属 |
+| 账号/登录态显示 | ✅ | 补齐 `account/watch` 流后恢复正常 |
+| 设备配对 | ✅ | 真机 Android，配对码 → 设备 cookie → 免密进入 |
+| WebSocket | ✅ | `/m/api/remote.mux` 剥前缀转发，会话流实时更新 |
+| 单元测试 | ✅ | **78 / 78 通过** |
+| Agent 浏览器 | ❌ | 预期失败：需要 Electron 主进程 API |
+
+验证方式：
+
+```bash
+# 单元测试（用桌面自带的 Electron Node，PATH 里通常没有 node）
+ELECTRON_RUN_AS_NODE=1 "C:\Data\APP\dsh\DeepSeek Harness.exe" --test test/*.test.mjs
+```
+
+---
+
+## 8. 排障
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| 连不上、端口没监听 | `enabled` 还是 `false`。改了配置要**重启 DSH**，不要用插件重载 |
+| 页面白板但 UI 在 | 某个 WebSocket 流被拒。看 `~/.dsh/remote-mobile/debug.jsonl` 里的 `ws-frame-denied` |
+| 会话全在「未分组」 | 同上，通常是 `remoteAccess/follow` 被拦 |
+| 资源 404 | 地址少了尾斜杠，确认是 `/m/` 不是 `/m` |
+| 被弹回配对页 | 设备 cookie 过期或被撤销，重新配对 |
+| 点「Agent 浏览器」报错 | 预期行为，见 §1 的能力表 |
+
+日志位置：`~/.dsh/remote-mobile/`
+- `audit.jsonl` —— 谁在什么时候访问了什么（只记元数据）
+- `debug.jsonl` —— 路由、WS 帧、cookie 交换等细节
+- `devices.json` —— 设备表（只有哈希，没有明文 secret）
+
+---
+
+## 9. 开发
+
+```bash
+# 语法检查
+ELECTRON_RUN_AS_NODE=1 "C:\Data\APP\dsh\DeepSeek Harness.exe" --check lib/net/listener.js
+
+# 单元测试
+ELECTRON_RUN_AS_NODE=1 "C:\Data\APP\dsh\DeepSeek Harness.exe" --test test/*.test.mjs
+```
+
+改 Host 代码之后：**重启 DSH**（不要只重载插件，见 §2 的配置陷阱）。
+
+## License
+
+MIT

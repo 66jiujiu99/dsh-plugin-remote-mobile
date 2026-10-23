@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d12">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>配对 · DSH 手机端</title>
+<link rel="icon" href="/m/icon.svg" type="image/svg+xml">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9; --card: #fff; --fg: #16181d; --fg2: #5a6070; --fg3: #878e9e;
+    --line: rgba(16,18,24,.12); --accent: #3f5bf6; --danger: #d93b3b; --soft: #eef1f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0b0d12; --card:#151821; --fg:#e8eaf0; --fg2:#a2a9ba; --fg3:#727a8c;
+      --line: rgba(255,255,255,.14); --accent:#6d86ff; --soft:#1b1f2a; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    padding: calc(24px + env(safe-area-inset-top)) 18px calc(24px + env(safe-area-inset-bottom));
+    -webkit-text-size-adjust: 100%;
+  }
+  .card {
+    width: 100%; max-width: 380px;
+    background: var(--card); border: .5px solid var(--line); border-radius: 18px;
+    padding: 26px 20px 22px; box-shadow: 0 12px 40px rgba(0,0,0,.16);
+  }
+  .logo { width: 46px; height: 46px; border-radius: 13px; display: block; margin: 0 auto 14px; }
+  h1 { font-size: 19px; margin: 0 0 6px; text-align: center; }
+  .lead { margin: 0 0 18px; text-align: center; color: var(--fg2); font-size: 13px; }
+  label { display: block; font-size: 12px; color: var(--fg3); margin: 0 0 6px; }
+  input[type=text], input[type=tel] {
+    width: 100%; padding: 12px 14px; border-radius: 12px;
+    border: .5px solid var(--line); background: var(--soft); color: var(--fg);
+    font-size: 16px; outline: none; -webkit-appearance: none;
+  }
+  input:focus { border-color: var(--accent); }
+  #code {
+    font-size: 26px; letter-spacing: .42em; text-align: center;
+    font-variant-numeric: tabular-nums; padding: 14px 10px 14px 18px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .field + .field { margin-top: 14px; }
+  button {
+    width: 100%; margin-top: 20px; padding: 13px; border: 0; border-radius: 12px;
+    background: var(--accent); color: #fff; font-size: 16px; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: .6; }
+  .error {
+    margin-top: 14px; padding: 10px 12px; border-radius: 10px;
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    color: var(--danger); font-size: 13px; display: none;
+  }
+  .error[data-show="1"] { display: block; }
+  .tip { margin-top: 16px; font-size: 11.5px; color: var(--fg3); line-height: 1.7; text-align: center; }
+  .tip code { font-size: 11px; }
+  .spin { display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,.45); border-top-color: #fff; animation: s .8s linear infinite;
+    vertical-align: -2px; margin-right: 6px; }
+  @keyframes s { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<form class="card" id="pair-form" method="post" action="/m/pair">
+  <img class="logo" src="/m/icon.svg" alt="DSH">
+  <h1>配对这台手机</h1>
+  <p class="lead">在 PC 的「设置 → 手机同步」里生成 6 位配对码</p>
+
+  <div class="field">
+    <label for="code">配对码</label>
+    <input id="code" name="code" type="tel" inputmode="numeric" autocomplete="one-time-code"
+           pattern="[0-9]*" maxlength="6" placeholder="000000" required autofocus>
+  </div>
+
+  <div class="field">
+    <label for="name">设备名（可选）</label>
+    <input id="name" name="name" type="text" maxlength="40" placeholder="例如：我的手机">
+  </div>
+
+  <button id="submit" type="submit">配对并进入</button>
+  <div class="error" id="error"></div>
+
+  <p class="tip">
+    配对码 60 秒内有效，只能用一次。<br>
+    当前是局域网明文连接，请只在可信 Wi-Fi 下使用。
+  </p>
+</form>
+
+<script>
+(function () {
+  var form = document.getElementById('pair-form');
+  var codeInput = document.getElementById('code');
+  var nameInput = document.getElementById('name');
+  var button = document.getElementById('submit');
+  var errorBox = document.getElementById('error');
+
+  var MSG = {
+    'rm/pair-invalid': '配对码不对，请核对 PC 上显示的 6 位数字。',
+    'rm/pair-expired': '配对码已过期，请在 PC 上重新生成。',
+    'rm/pair-used': '这个配对码已经用过了，请重新生成。',
+    'rm/pair-locked': '错误次数过多，请等一分钟再试。',
+    'rm/disabled': 'PC 上还没有开启「手机同步」，请先在设置里打开。',
+    'rm/too-large': '请求过大。',
+    'rm/network': '网络连接失败，请确认手机和 PC 在同一个 Wi-Fi。'
+  };
+
+  function showError(text) {
+    errorBox.textContent = text;
+    errorBox.setAttribute('data-show', '1');
+  }
+  function clearError() {
+    errorBox.textContent = '';
+    errorBox.removeAttribute('data-show');
+  }
+  function setBusy(busy) {
+    button.disabled = busy;
+    button.innerHTML = busy ? '<span class="spin"></span>正在配对…' : '配对并进入';
+  }
+
+  function guessName() {
+    var ua = navigator.userAgent;
+    if (/iPhone/i.test(ua)) return 'iPhone';
+    if (/iPad/i.test(ua)) return 'iPad';
+    if (/Android/i.test(ua)) return 'Android 手机';
+    return '';
+  }
+
+  // ?code= / ?c= 预填；有预填则自动提交一次（配对码一次性，页面自己消费，服务端不消费）。
+  var params = new URLSearchParams(location.search);
+  var preset = params.get('code') || params.get('c') || '';
+  var auto = params.get('auto') !== '0';
+  if (/^\d{6}$/.test(preset)) {
+    codeInput.value = preset;
+    if (auto) setTimeout(submit, 250);
+  } else if (preset) {
+    codeInput.value = preset.replace(/\D/g, '').slice(0, 6);
+  }
+  if (!nameInput.value) {
+    var saved = '';
+    try { saved = localStorage.getItem('dshm.deviceName') || ''; } catch (e) { saved = ''; }
+    nameInput.value = saved || guessName();
+  }
+
+  codeInput.addEventListener('input', function () {
+    var digits = codeInput.value.replace(/\D/g, '').slice(0, 6);
+    if (digits !== codeInput.value) codeInput.value = digits;
+    clearError();
+  });
+
+  function submit() {
+    if (button.disabled) return;
+    clearError();
+    var code = (codeInput.value || '').replace(/\D/g, '');
+    if (code.length !== 6) {
+      showError('请输入 6 位数字配对码。');
+      codeInput.focus();
+      return;
+    }
+    var name = (nameInput.value || '').trim();
+    try { localStorage.setItem('dshm.deviceName', name); } catch (e) { /* 忽略 */ }
+    setBusy(true);
+
+    fetch('/m/pair', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: code, name: name || undefined }),
+      credentials: 'same-origin',
+      redirect: 'manual',
+      cache: 'no-store'
+    }).then(function (response) {
+      // 成功：303/200（Set-Cookie 由浏览器记下）；失败：JSON 错误体。
+      if (response.status === 0 || response.type === 'opaqueredirect' || response.ok || response.status === 303) {
+        location.replace('/m');
+        return null;
+      }
+      return response.text().then(function (text) {
+        var parsed = null;
+        try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
+        var code = parsed && parsed.error && parsed.error.code;
+        var message = (parsed && parsed.error && parsed.error.message) || ('HTTP ' + response.status);
+        showError(MSG[code] || message);
+        setBusy(false);
+      });
+    }).catch(function () {
+      showError(MSG['rm/network']);
+      setBusy(false);
+    });
+  }
+
+  form.addEventListener('submit', function (event) {
+    event.preventDefault();
+    submit();
+  });
+})();
+</script>
+</body>
+</html>
