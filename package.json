@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-remote-mobile",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "DSH 手机同步：把桌面端完整 Web UI 反代到手机（/m），带设备配对、只读策略与审批路由。手机上的操作全部在 PC 端执行，手机只负责看和点。",
