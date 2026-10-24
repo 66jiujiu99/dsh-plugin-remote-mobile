@@ -73,12 +73,15 @@
 <form class="card" id="pair-form" method="post" action="/m/pair">
   <img class="logo" src="/m/icon.svg" alt="DSH">
   <h1>配对这台手机</h1>
-  <p class="lead">在 PC 的「设置 → 手机同步」里生成 6 位配对码</p>
+  <p class="lead">在 PC 的「设置 → 手机同步」里生成 8 位配对码</p>
 
   <div class="field">
     <label for="code">配对码</label>
-    <input id="code" name="code" type="tel" inputmode="numeric" autocomplete="one-time-code"
-           pattern="[0-9]*" maxlength="6" placeholder="000000" required autofocus>
+    <!-- 配对码是 8 位字母+数字：不能用 inputmode="numeric"（那会调出纯数字键盘，
+         用户根本打不出字母）。用 text + 自动大写 + autocapitalize，手机键盘正常显示。 -->
+    <input id="code" name="code" type="text" inputmode="text" autocapitalize="characters"
+           autocorrect="off" spellcheck="false" autocomplete="one-time-code"
+           maxlength="8" placeholder="ABCD2345" required autofocus>
   </div>
 
   <div class="field">
@@ -104,7 +107,7 @@
   var errorBox = document.getElementById('error');
 
   var MSG = {
-    'rm/pair-invalid': '配对码不对，请核对 PC 上显示的 6 位数字。',
+    'rm/pair-invalid': '配对码不对，请核对 PC 上显示的 8 位配对码。',
     'rm/pair-expired': '配对码已过期，请在 PC 上重新生成。',
     'rm/pair-used': '这个配对码已经用过了，请重新生成。',
     'rm/pair-locked': '错误次数过多，请等一分钟再试。',
@@ -136,13 +139,13 @@
 
   // ?code= / ?c= 预填；有预填则自动提交一次（配对码一次性，页面自己消费，服务端不消费）。
   var params = new URLSearchParams(location.search);
-  var preset = params.get('code') || params.get('c') || '';
+  var preset = (params.get('code') || params.get('c') || '').toUpperCase().replace(/[^2-9A-HJ-NP-Z]/g, '');
   var auto = params.get('auto') !== '0';
-  if (/^\d{6}$/.test(preset)) {
+  if (/^[2-9A-HJ-NP-Z]{8}$/.test(preset)) {
     codeInput.value = preset;
     if (auto) setTimeout(submit, 250);
   } else if (preset) {
-    codeInput.value = preset.replace(/\D/g, '').slice(0, 6);
+    codeInput.value = preset.slice(0, 8);
   }
   if (!nameInput.value) {
     var saved = '';
@@ -151,17 +154,20 @@
   }
 
   codeInput.addEventListener('input', function () {
-    var digits = codeInput.value.replace(/\D/g, '').slice(0, 6);
-    if (digits !== codeInput.value) codeInput.value = digits;
+    // 配对码是 8 位大写字母+数字（字母表排除了 0/O/1/I/L）。
+    // 这里做「输入即规范化」：转大写、扔掉空格与其他符号，让手机输入法
+    // 自动首字母大写或手输带空格都不会被判成格式错误。
+    var cleaned = codeInput.value.toUpperCase().replace(/[^2-9A-HJ-NP-Z]/g, '').slice(0, 8);
+    if (cleaned !== codeInput.value) codeInput.value = cleaned;
     clearError();
   });
 
   function submit() {
     if (button.disabled) return;
     clearError();
-    var code = (codeInput.value || '').replace(/\D/g, '');
-    if (code.length !== 6) {
-      showError('请输入 6 位数字配对码。');
+    var code = (codeInput.value || '').toUpperCase().replace(/[^2-9A-HJ-NP-Z]/g, '');
+    if (code.length !== 8) {
+      showError('请输入 8 位配对码（数字与大写字母，不含 0/O/1/I/L）。');
       codeInput.focus();
       return;
     }
