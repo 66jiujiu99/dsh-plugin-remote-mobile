@@ -330,3 +330,55 @@ test('RPC 接线：provider=none 时 tunnel.start 明确拒绝', async () => {
     await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
   }
 })
+
+test('RPC：tunnel.setIdle 改空闲超时，立即生效且 status 能读到', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'rm-rpc-idle-'))
+  const exeDir = await mkdtemp(path.join(os.tmpdir(), 'rm-rpc-exe-'))
+  process.env.DSH_HOME = home
+  const upstream = await startFakeUpstream()
+  const { ctx, routes, disposeAll } = makeCtx(upstream.origin)
+  try {
+    const fake = await makeFakeExe(exeDir, 'INF |  https://idle-rpc-test.trycloudflare.com  |')
+    apply(ctx, {
+      enabled: true,
+      bindAddress: '127.0.0.1',
+      port: 0,
+      audit: { enabled: false },
+      approvalRouting: 'off',
+      tunnel: { provider: 'quick', binaryPath: fake, idleTimeoutSec: 1800, startTimeoutSec: 30 },
+    })
+    await waitFor(async () => {
+      const r = await rpc(routes, 'status')
+      return (r.json?.data?.port ?? 0) > 0
+    }, 10_000, '监听器启动')
+
+    // 初始值来自配置。
+    let st = await rpc(routes, 'tunnel.status')
+    assert.equal(st.json.data.tunnel.idleTimeoutSec, 1800, JSON.stringify(st.json.data.tunnel))
+
+    // 改成「永不主动关」。
+    const set = await rpc(routes, 'tunnel.setIdle', { idleTimeoutSec: 0 })
+    assert.equal(set.json.ok, true, JSON.stringify(set.json))
+    assert.equal(set.json.data.idleTimeoutSec, 0)
+    st = await rpc(routes, 'tunnel.status')
+    assert.equal(st.json.data.tunnel.idleTimeoutSec, 0)
+
+    // 改回 300 秒。
+    const set2 = await rpc(routes, 'tunnel.setIdle', { idleTimeoutSec: 300 })
+    assert.equal(set2.json.data.idleTimeoutSec, 300)
+
+    // 越界值必须被拒。
+    for (const bad of [-1, 86_401, 'x', null]) {
+      const rejected = await rpc(routes, 'tunnel.setIdle', { idleTimeoutSec: bad })
+      assert.equal(rejected.json.ok, false, `应拒绝 ${JSON.stringify(bad)}`)
+      assert.equal(rejected.json.error.code, 'rm/bad-request')
+    }
+  } finally {
+    await disposeAll()
+    await upstream.close()
+    delete process.env.DSH_HOME
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
+    await rm(exeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
+  }
+})

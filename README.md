@@ -176,6 +176,10 @@ tunnel:
 
 **想尽量不失效**：`idleTimeoutSec: 0` + `reconnect: true` + 大 `reconnectBudgetSec`。
 
+> 面板上也能改：设置 → 手机同步 →「公网隧道」→ **空闲断开**下拉框。
+> 改完**立即生效**，不用重启；选「永不主动关」等于 `idleTimeoutSec: 0`。
+> 面板改的是运行时值，重启后会回到 `cordis.patch.yml` 里的配置。
+
 **必须知道的硬限制**：DSH 一关（或被强杀），域名必然失效。这是 Quick Tunnel
 的固有代价，不是本插件的限制——想拿固定域名得用 Cloudflare named tunnel
 （需要账号与自有域名），本插件不做。

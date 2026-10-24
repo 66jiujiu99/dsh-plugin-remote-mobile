@@ -173,8 +173,19 @@ export function apply(ctx, rawConfig) {
     return {
       ok: true,
       provider: config.tunnel.provider,
-      tunnel: tunnel?.status() ?? { phase: 'idle' },
+      tunnel: tunnel?.status() ?? { phase: 'idle', idleTimeoutSec: config.tunnel.idleTimeoutSec },
     }
+  }
+
+  /**
+   * 改隧道空闲超时（面板直接调，不用改配置文件再重启）。
+   * @param {number} seconds - 0 = 永不主动关。
+   * @returns {{ ok: true, idleTimeoutSec: number }} 生效后的值。
+   */
+  function setTunnelIdleTimeout(seconds) {
+    if (tunnel === undefined) throw new RmError('rm/tunnel-unavailable', '隧道模块未初始化')
+    const result = tunnel.setIdleTimeout(seconds)
+    return { ok: true, idleTimeoutSec: result.idleTimeoutSec }
   }
 
   /**
@@ -362,6 +373,7 @@ export function apply(ctx, rawConfig) {
             startTunnel,
             stopTunnel,
             tunnelStatus,
+            setTunnelIdleTimeout,
           },
         })
       } catch (error) {

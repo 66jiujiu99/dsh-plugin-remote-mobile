@@ -29,6 +29,12 @@ window.__ModuleLoader__.load({
     const TAB_KIND = 'remote-mobile';
 
     // ───────────────────────────── 文案 ─────────────────────────────
+    /** 面板上的空闲时长档位（秒）。0 = 永不主动关。 */
+    const IDLE_OPTIONS = [
+      { value: 0 }, { value: 300 }, { value: 900 }, { value: 1800 },
+      { value: 3600 }, { value: 10800 }, { value: 86400 },
+    ]
+
     const ZH = {
       nav: '手机同步',
       title: '手机同步',
@@ -116,7 +122,14 @@ window.__ModuleLoader__.load({
       tunnelWarn: '⚠ 当前 /m 可从公网访问。请确保配对码没有外传；不用时请关掉。',
       tunnelOpened: '隧道已开启',
       tunnelClosed: '隧道已关闭',
-      tunnelIdle: '已空闲 {n} 秒（长时间无请求会自动断开）',
+      tunnelIdle: '已空闲 {n} 秒',
+      tunnelIdleLabel: '空闲断开',
+      tunnelIdleNever: '永不主动关',
+      tunnelIdleMin: '{n} 分钟',
+      tunnelIdleHour: '{n} 小时',
+      tunnelIdleHint: '超过这个时间没有手机请求就自动关隧道（省电、少暴露）。' +
+        '「永不主动关」适合长期挂着；注意 DSH 一关隧道必然失效。',
+      tunnelIdleSaved: '空闲断开已设为 {v}',
     };
 
     const EN = {
@@ -206,7 +219,14 @@ window.__ModuleLoader__.load({
       tunnelWarn: '⚠ /m is currently reachable from the public internet. Keep the pairing code private and close the tunnel when done.',
       tunnelOpened: 'Tunnel opened',
       tunnelClosed: 'Tunnel closed',
-      tunnelIdle: 'Idle for {n}s (closes automatically after a long idle period)',
+      tunnelIdle: 'Idle for {n}s',
+      tunnelIdleLabel: 'Idle timeout',
+      tunnelIdleNever: 'Never close',
+      tunnelIdleMin: '{n} min',
+      tunnelIdleHour: '{n} h',
+      tunnelIdleHint: 'Closes the tunnel after this long without a phone request (less exposure, less battery). ' +
+        '"Never close" suits long-running setups; note the tunnel still dies when DSH quits.',
+      tunnelIdleSaved: 'Idle timeout set to {v}',
     };
 
     // ───────────────────────────── RPC ─────────────────────────────
@@ -286,6 +306,7 @@ window.__ModuleLoader__.load({
       /* 公网可达的强提示：一眼就能看到，不靠颜色辨别能力也能读。 */
       .rm-tunnel-warn { padding: 8px 10px; border-radius: var(--dsw-radius-sm); background: var(--dsw-alias-bg-warning, rgba(184,134,11,.12)); border: .5px solid var(--dsw-alias-state-warning-primary, #b8860b); font: var(--dsw-font-xxs-12); line-height: 1.5; }
       .rm-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .rm-select { font: var(--dsw-font-xxs-12); padding: 4px 8px; border-radius: var(--dsw-radius-sm); border: .5px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-layer-1); color: inherit; }
       .rm-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
       .rm-card { border: .5px solid var(--dsw-alias-border-l3); border-radius: var(--dsw-radius-sm); background: var(--dsw-alias-bg-layer-1); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
@@ -475,6 +496,23 @@ window.__ModuleLoader__.load({
       const idleText = tunnelPhase === 'running' && Number.isFinite(tunnelIdleSec)
         ? t('tunnelIdle').replace('{n}', String(tunnelIdleSec))
         : '';
+
+      // 面板上可选的空闲时长（秒）。0 = 永不主动关。
+      // 只给常见档位，避免用户对着数字框发呆；当前值不在档位里也能显示。
+      const idleChoice = (tunnelState && tunnelState.tunnel && typeof tunnelState.tunnel.idleTimeoutSec === 'number')
+        ? tunnelState.tunnel.idleTimeoutSec
+        : 1800;
+      const idleLabelOf = (sec) => {
+        if (sec === 0) return t('tunnelIdleNever');
+        if (sec < 3600) return t('tunnelIdleMin').replace('{n}', String(Math.round(sec / 60)));
+        return t('tunnelIdleHour').replace('{n}', String(Math.round(sec / 3600)));
+      };
+
+      const saveIdle = (seconds) => run('tunnelIdle', async () => {
+        const value = await call('tunnel.setIdle', { idleTimeoutSec: seconds });
+        flash(t('tunnelIdleSaved').replace('{v}', idleLabelOf(seconds)));
+        return value;
+      });
 
       const startTunnel = () => run('tunnelStart', async () => {
         const value = await call('tunnel.start');
@@ -718,6 +756,21 @@ window.__ModuleLoader__.load({
 
           h('div', { className: 'rm-muted' }, listening ? t('tunnelHint') : t('tunnelNeedListener')),
           idleText ? h('div', { className: 'rm-muted' }, idleText) : null,
+
+          // ── 空闲断开时长（可改，立即生效，不用去改配置文件）──────────
+          h('div', { className: 'rm-row', style: { marginTop: '2px' } },
+            h('span', { className: 'rm-muted', style: { minWidth: '86px' } }, t('tunnelIdleLabel')),
+            h('select', {
+              className: 'rm-select',
+              value: String(idleChoice),
+              disabled: busy === 'tunnelIdle',
+              onChange: (event) => saveIdle(Number(event.currentTarget.value)),
+            },
+              IDLE_OPTIONS.map((option) => h('option', { key: option.value, value: String(option.value) }, idleLabelOf(option.value))),
+            ),
+            busy === 'tunnelIdle' ? h('span', { className: 'rm-muted' }, t('loading')) : null,
+          ),
+          h('div', { className: 'rm-muted' }, t('tunnelIdleHint')),
         ),
 
         // 设备
