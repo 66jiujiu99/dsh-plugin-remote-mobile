@@ -3,13 +3,23 @@
 # 审批影子应答者。Client 半边（设置页分区）由 package.json 的 dsh.client 声明。
 #
 # 默认 enabled: false —— 装上插件不绑任何非环回地址（PLAN §6.3）。
-# 需要打开时用 PC 面板的开关（或改这里的 enabled 后重启）。
+# 需要打开时用 PC 面板的开关（或把这里的 enabled 改成 true 后重启）。
+#
+# ⚠ 注意：`~/.dsh/profiles/<profile>/cordis.yml` 是 **Loader 生成物**，
+#   每次启动都会按本文件的默认值重新生成，所以手工改 cordis.yml 会在重启时被冲掉。
+#   要持久化配置，改这里，然后重启 DSH。
+#
+# ⚠ 另一个坑：面板上的开关只改**运行时状态**，不写盘。所以"面板开了、
+#   重启又关了"是预期行为，不是 bug。要重启后仍然开着，就得把这里改成 true。
+#
 # 全部键的校验见 lib/config.js（未知键会被拒绝，避免拼写错误被静默忽略）。
 - insert:
     - id: remote-mobile
       name: dsh-plugin-remote-mobile
       config:
-        enabled: false
+        # 改成 true：手机同步开机即监听，不用每次重启后去面板点一下。
+        # 若你不想让它默认开，改回 false 即可（面板仍可临时开）。
+        enabled: true
         bindAddress: 0.0.0.0
         port: 17890
         allowedNetworks: []
@@ -18,7 +28,13 @@
         pairMaxAttempts: 5
         lanOnly: true
         tunnel:
-          provider: none
+          # quick = Cloudflare 匿名隧道（免账号/免服务器/免公网 IP）。
+          # 默认设为 quick，但**端口不会自动开**：面板上必须手动点「开启隧道」。
+          # 改成 none 可彻底关掉公网能力（面板按钮会明确报 rm/tunnel-disabled）。
+          provider: quick
+          binaryPath: ""
+          idleTimeoutSec: 1800
+          startTimeoutSec: 90
           serverAddr: ""
           serverPort: 7000
           remotePort: 0

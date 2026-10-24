@@ -265,3 +265,42 @@ test('集成：配对码 8 位、大小写与空格容错、同 IP 限流生效'
     await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })
+
+test('集成：根路径 302 到 /m（隧道给的是 https://域名/，用户会直接打开它）', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'rm-int-home-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'rm-int-'))
+  const previousHome = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+  let listener
+  try {
+    const fake = await makeFakeExe(dir, 'INF |  https://root-redirect-test.trycloudflare.com  |')
+    const config = resolveConfig({ enabled: false, port: 0, tunnel: { provider: 'quick', binaryPath: fake } })
+    const log = () => {}
+    const audit = createAudit({ config, log })
+    const devices = createDevices({ config, audit, log })
+    await devices.ready()
+    const tunnel = createTunnel({ config, log, audit, toolsDir: dir, getPort: () => listener?.port ?? 0 })
+    listener = createListener({
+      config,
+      devices,
+      pairing: createPairing({ config, devices, audit }),
+      approvals: makeApprovalsStub(),
+      upstream: makeUpstreamStub('ok'),
+      statics: makeStaticsStub(),
+      audit, log, tunnel,
+    })
+    const { port } = await listener.start()
+
+    const result = await getWithHost(port, '/', `127.0.0.1:${port}`)
+    assert.equal(result.status, 302, '根路径应 302，而不是 404 JSON')
+    assert.equal(result.location, '/m')
+    await tunnel.close('test')
+  } finally {
+    if (listener !== undefined) await listener.stop({ resumeApprovals: false }).catch(() => {})
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+    await new Promise((r) => setTimeout(r, 200))
+    await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
+  }
+})
