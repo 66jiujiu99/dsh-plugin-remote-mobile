@@ -134,7 +134,10 @@ test('sanitizeServerFrame：非 ready 帧原样透传（返回 undefined）', ()
   assert.equal(sanitizeServerFrame({ fin: true, opcode: 0x1, masked: false, payload: Buffer.from('not json') }), undefined)
 })
 
-test('inspectClientFrame：unary 端点走 mux 被本地拒绝，流端点放行', () => {
+test('inspectClientFrame：open 帧只受策略层约束，不再按端点白名单本地拒', () => {
+  // 早期版本在这里按"流端点白名单"本地拒掉非流端点，结果一次次漏
+  // （remoteAccess/follow、workspaceFiles/changes、job/list 都漏过）。
+  // 现在：黑名单之外的 open 一律放行，交给上游判定。
   const authorizeOpen = () => ({ ok: true })
   const openSessionList = {
     fin: true,
@@ -147,10 +150,8 @@ test('inspectClientFrame：unary 端点走 mux 被本地拒绝，流端点放行
       payload: { args: { _request: {} } },
     })),
   }
-  const denied = inspectClientFrame(openSessionList, authorizeOpen)
-  assert.equal(denied.action, 'drop')
-  assert.equal(denied.error.streamId, 'f1')
-  assert.match(denied.error.message, /不是流端点/)
+  // 不再因为"看起来不是流"就本地拒。
+  assert.equal(inspectClientFrame(openSessionList, authorizeOpen).action, 'pass')
 
   const openFollow = {
     fin: true,
@@ -159,6 +160,17 @@ test('inspectClientFrame：unary 端点走 mux 被本地拒绝，流端点放行
     payload: Buffer.from(JSON.stringify({ type: 'open', streamId: 'f2', endpoint: 'session/follow' })),
   }
   assert.equal(inspectClientFrame(openFollow, authorizeOpen).action, 'pass')
+
+  // 但**永久黑名单**仍然在本地就拒（这道边界不能交给上游）。
+  const openTerminal = {
+    fin: true,
+    opcode: 0x1,
+    masked: true,
+    payload: Buffer.from(JSON.stringify({ type: 'open', streamId: 'f3', endpoint: 'terminal/attach' })),
+  }
+  const blocked = inspectClientFrame(openTerminal, authorizeOpen)
+  assert.equal(blocked.action, 'drop')
+  assert.equal(blocked.error.streamId, 'f3')
 
   // 策略层拒绝（例如只读设备的黑名单端点）同样 drop。
   const deniedByPolicy = inspectClientFrame(openFollow, () => ({ ok: false, message: '只读设备不允许' }))

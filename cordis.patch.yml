@@ -33,7 +33,17 @@
           # 改成 none 可彻底关掉公网能力（面板按钮会明确报 rm/tunnel-disabled）。
           provider: quick
           binaryPath: ""
+          # ── 链接有效期（两层，都可配）─────────────────────────────
+          # 1) 我们主动关：idleTimeoutSec 秒内没有任何手机请求就关掉。
+          #    **0 = 永不主动关**（想长期挂着的用这个）。
           idleTimeoutSec: 1800
+          # 2) 意外断开后自动重连（网络抖动 / Cloudflare 回收 / 休眠恢复）。
+          #    重连会拿到**新域名**——这是 Quick Tunnel 的规则，改不了。
+          #    reconnectBudgetSec 是重连总时长上限（0 = 不给重连额度）。
+          reconnect: true
+          reconnectBudgetSec: 3600
+          reconnectMaxDelaySec: 60
+          # 等域名的最长时间（Cloudflare 分配通常 10-60 秒）。
           startTimeoutSec: 90
           serverAddr: ""
           serverPort: 7000

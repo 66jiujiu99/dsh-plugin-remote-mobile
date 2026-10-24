@@ -12,6 +12,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -303,4 +304,109 @@ test('touch：不在 running 时是空操作（不会让状态错乱）', async 
   })
   tunnel.touch()
   assert.equal(tunnel.status().phase, 'idle')
+})
+
+test('重连：cloudflared 意外退出后会自己回来（新域名）', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'rm-reconnect-'))
+  try {
+    // 假 exe：先打域名，1.5 秒后自己退出（模拟网络抖动导致 cloudflared 挂掉）。
+    const source = path.join(dir, 'fake.cs')
+    const exe = path.join(dir, 'cloudflared.exe')
+    await writeFile(source, [
+      'using System;',
+      'using System.Threading;',
+      'class P { static void Main(string[] a) {',
+      '  Console.Error.WriteLine("INF |  https://reconnect-lab-test.trycloudflare.com  |");',
+      '  Thread.Sleep(1500);',
+      '  Environment.Exit(9);',
+      '} }',
+    ].join('\n'), 'utf8')
+    const built = spawnSync('C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe', ['-nologo', `-out:${exe}`, source], { encoding: 'utf8' })
+    if (built.status !== 0) throw new Error(`csc 失败：${built.stdout}${built.stderr}`)
+
+    const { createTunnel } = await import('../lib/net/tunnel.js')
+    const tunnel = createTunnel({
+      config: {
+        tunnel: {
+          provider: 'quick',
+          binaryPath: exe,
+          idleTimeoutSec: 0,
+          startTimeoutSec: 30,
+          reconnect: true,
+          reconnectBudgetSec: 60,
+          reconnectMaxDelaySec: 2,
+        },
+      },
+      log: () => {},
+      audit: { audit() {}, debug() {} },
+      getPort: () => 12345,
+    })
+
+    const first = await tunnel.start()
+    assert.equal(first.url, 'https://reconnect-lab-test.trycloudflare.com')
+
+    // 等它退出 + 触发重连。假 exe 每 1.5s 就退一次，所以状态会在
+    // running → idle → running 之间循环：**不能用单次采样**判断重连成功，
+    // 要在窗口内轮询"是否又回到过 running"。
+    // （第一版就是单点采样撞在 idle 窗口里，误判成失败。）
+    let sawRunningAgain = false
+    const deadline = Date.now() + 9000
+    while (Date.now() < deadline) {
+      if (tunnel.status().phase === 'running') {
+        sawRunningAgain = true
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200))
+    }
+    assert.equal(sawRunningAgain, true, '意外退出后应自动重连回 running（轮询 9s 未观察到）')
+
+    await tunnel.close('test')
+    // 主动关闭后不能再自己爬起来。
+    await new Promise((resolve) => setTimeout(resolve, 3000))
+    assert.equal(tunnel.status().phase, 'idle', '主动关闭后不该自动重连')
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
+  }
+})
+
+test('重连：reconnect=false 时意外退出就停在 idle（用户显式关闭了这个行为）', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'rm-noreconnect-'))
+  try {
+    const source = path.join(dir, 'fake.cs')
+    const exe = path.join(dir, 'cloudflared.exe')
+    await writeFile(source, [
+      'using System;',
+      'using System.Threading;',
+      'class P { static void Main(string[] a) {',
+      '  Console.Error.WriteLine("INF |  https://no-reconnect-test.trycloudflare.com  |");',
+      '  Thread.Sleep(800);',
+      '  Environment.Exit(7);',
+      '} }',
+    ].join('\n'), 'utf8')
+    const built = spawnSync('C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe', ['-nologo', `-out:${exe}`, source], { encoding: 'utf8' })
+    if (built.status !== 0) throw new Error(`csc 失败：${built.stdout}${built.stderr}`)
+
+    const { createTunnel } = await import('../lib/net/tunnel.js')
+    const tunnel = createTunnel({
+      config: {
+        tunnel: {
+          provider: 'quick',
+          binaryPath: exe,
+          idleTimeoutSec: 0,
+          startTimeoutSec: 30,
+          reconnect: false,
+          reconnectBudgetSec: 60,
+          reconnectMaxDelaySec: 1,
+        },
+      },
+      log: () => {},
+      audit: { audit() {}, debug() {} },
+      getPort: () => 12345,
+    })
+    await tunnel.start()
+    await new Promise((resolve) => setTimeout(resolve, 4000))
+    assert.equal(tunnel.status().phase, 'idle', 'reconnect=false 时不该自动重连')
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
+  }
 })

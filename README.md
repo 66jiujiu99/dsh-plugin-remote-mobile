@@ -150,22 +150,47 @@ https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-w
 
 **这个开关是手动的，刻意不跟 `enabled` 联动**：开了监听不等于要开公网。
 
-### 三条行为约定
+### 四条行为约定
 
 | 行为 | 说明 |
 |---|---|
-| **域名每次都变** | Quick Tunnel 不做持久域名。重启隧道就是新地址，旧地址立刻失效 |
-| **空闲自动断开** | `tunnel.idleTimeoutSec`（默认 1800 秒）内没有请求就自动关隧道。你在用就一直给，不用就断 |
-| **父死子亡** | DSH 崩溃或被任务管理器结束，隧道会跟着消失（靠管道所有权，不依赖清理代码）。不会留下仍在公网暴露的孤儿进程 |
+| **域名每次都变** | Quick Tunnel 不做持久域名。重连或重启后就是新地址 |
+| **空闲自动断开** | `tunnel.idleTimeoutSec`（默认 1800 秒）内没有请求就自动关。**设 0 = 永不主动关** |
+| **断开后自动重连** | `tunnel.reconnect`（默认开）。指数退避重试，`reconnectBudgetSec` 内一直试 |
+| **父死子亡** | DSH 崩溃或被任务管理器结束，隧道会跟着消失（靠管道所有权，不依赖清理代码） |
+
+### 「链接多久失效」怎么配
+
+Quick Tunnel 的域名由 Cloudflare 分配，**cloudflared 进程一退出域名就作废**。
+所以"有效期"是两层，**都能配**：
+
+```yaml
+tunnel:
+  # ① 我们主动关：多久没请求就关。0 = 永不主动关。
+  idleTimeoutSec: 0
+  # ② 意外断开后自动重连（会换新域名）。不想要就设 false。
+  reconnect: true
+  reconnectBudgetSec: 86400   # 重连额度：一天内一直尝试
+  reconnectMaxDelaySec: 60    # 退避上限
+```
+
+**想尽量不失效**：`idleTimeoutSec: 0` + `reconnect: true` + 大 `reconnectBudgetSec`。
+
+**必须知道的硬限制**：DSH 一关（或被强杀），域名必然失效。这是 Quick Tunnel
+的固有代价，不是本插件的限制——想拿固定域名得用 Cloudflare named tunnel
+（需要账号与自有域名），本插件不做。
 
 ### 配置项
 
 ```yaml
 tunnel:
-  provider: quick        # none | quick（frpc 仍是预留形状，未实现）
-  binaryPath: ''         # 空 = 自动找 PATH 与 tools/
-  idleTimeoutSec: 1800   # 空闲多久自动关（0 = 不自动关）
-  startTimeoutSec: 90    # 等域名的最长时间
+  provider: quick              # none | quick（frpc 仍是预留形状，未实现）
+  binaryPath: ''               # 空 = 自动找 PATH 与 tools/
+  idleTimeoutSec: 1800         # 空闲多久自动关（0 = 永不主动关）
+  reconnect: true              # 意外断开后自动重连（换新域名）
+  reconnectBudgetSec: 3600     # 重连总时长上限
+  reconnectMaxDelaySec: 60     # 指数退避上限
+  startTimeoutSec: 90          # 等域名的最长时间
 ```
 
 ---
